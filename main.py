@@ -5,10 +5,13 @@ import httpx
 from config import TOKEN, BACKEND_URL, GUILD_ID, NOTIFICATIONS_CHANNEL_ID
 import signal
 import sys
+from datetime import datetime, timedelta
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
+
+start_time = datetime.utcnow()
 
 @bot.event
 async def on_ready():
@@ -29,7 +32,8 @@ async def update_channel_description():
                 data = response.json()
                 active_players = data['active_players_count']
                 total_players = data['total_players']
-                await channel.edit(topic=f"Active Players: {active_players}/{total_players}")
+                uptime = get_uptime()
+                await channel.edit(topic=f"Active Players: {active_players}/{total_players} | Server Uptime: {uptime}")
 
 @tasks.loop(minutes=1)
 async def update_bot_status():
@@ -44,6 +48,12 @@ async def update_bot_status():
     except Exception as e:
         print(f"Error updating bot status: {e}")
 
+def get_uptime():
+    now = datetime.utcnow()
+    delta = now - start_time
+    days, hours, minutes = delta.days, delta.seconds // 3600, (delta.seconds // 60) % 60
+    return f"{days}d {hours}h {minutes}m"
+
 @bot.command(name='w')
 async def website(ctx):
     await ctx.send("Visit our website: https://website.missilewars.dev")
@@ -51,13 +61,46 @@ async def website(ctx):
 @bot.command(name='clear')
 @commands.has_permissions(manage_messages=True)
 async def clear(ctx, amount: int):
+    max_amount = 1000  # Set your desired maximum here
     if amount <= 0:
         await ctx.send("Please specify a positive number of messages to delete.")
         return
+    if amount > max_amount:
+        await ctx.send(f"You can only delete up to {max_amount} messages at once.")
+        return
+
+    # Delete command message
+    await ctx.message.delete()
+
+    deleted = 0
+    batch_size = 100  # Discord allows up to 100 messages to be deleted at once
+    
+    # Send an initial status message
+    status_message = await ctx.send(f"Deleting messages... (0/{amount})")
 
     try:
-        deleted = await ctx.channel.purge(limit=amount + 1)  # +1 to include the command message
-        await ctx.send(f"Deleted {len(deleted) - 1} messages.", delete_after=5)
+        while deleted < amount:
+            # Calculate how many messages to delete in this batch
+            to_delete = min(batch_size, amount - deleted)
+            
+            # Fetch and delete messages
+            messages = await ctx.channel.history(limit=to_delete).flatten()
+            await ctx.channel.delete_messages(messages)
+            
+            deleted += len(messages)
+            
+            # Update status message every 5 batches or when done
+            if deleted % (batch_size * 5) == 0 or deleted == amount:
+                await status_message.edit(content=f"Deleting messages... ({deleted}/{amount})")
+            
+            # Pause to respect rate limits
+            await asyncio.sleep(1.5)
+
+        # Final update and cleanup
+        await status_message.edit(content=f"Deleted {deleted} messages.")
+        await asyncio.sleep(5)
+        await status_message.delete()
+
     except discord.Forbidden:
         await ctx.send("I don't have the required permissions to delete messages.")
     except discord.HTTPException as e:
