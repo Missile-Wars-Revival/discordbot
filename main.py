@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import asyncio
 import httpx
-from config import TOKEN, BACKEND_URL, GUILD_ID, CHANNEL_ID
+from config import TOKEN, BACKEND_URL, GUILD_ID, NOTIFICATIONS_CHANNEL_ID
 import signal
 import sys
 
@@ -22,7 +22,7 @@ async def on_ready():
 async def update_channel_description():
     guild = bot.get_guild(GUILD_ID)
     if guild:
-        channel = guild.get_channel(CHANNEL_ID)
+        channel = guild.get_channel(NOTIFICATIONS_CHANNEL_ID)
         if channel:
             async with httpx.AsyncClient() as client:
                 response = await client.get(f"{BACKEND_URL}/api/map-data")
