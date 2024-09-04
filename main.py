@@ -3,6 +3,8 @@ from discord.ext import commands, tasks
 import asyncio
 import httpx
 from config import TOKEN, BACKEND_URL, GUILD_ID, CHANNEL_ID
+import signal
+import sys
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -36,5 +38,20 @@ async def main():
     async with bot:
         await bot.start(TOKEN)
 
+def signal_handler(sig, frame):
+    print('Shutting down gracefully...')
+    asyncio.create_task(bot.close())
+    sys.exit(0)
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print('Received interrupt, shutting down...')
+    finally:
+        # Ensure that the bot is properly closed
+        if not bot.is_closed():
+            asyncio.run(bot.close())
