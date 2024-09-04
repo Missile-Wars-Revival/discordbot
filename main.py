@@ -48,6 +48,21 @@ async def update_bot_status():
 async def website(ctx):
     await ctx.send("Visit our website: https://website.missilewars.dev")
 
+@bot.command(name='clear')
+@commands.has_permissions(manage_messages=True)
+async def clear(ctx, amount: int):
+    if amount <= 0:
+        await ctx.send("Please specify a positive number of messages to delete.")
+        return
+
+    try:
+        deleted = await ctx.channel.purge(limit=amount + 1)  # +1 to include the command message
+        await ctx.send(f"Deleted {len(deleted) - 1} messages.", delete_after=5)
+    except discord.Forbidden:
+        await ctx.send("I don't have the required permissions to delete messages.")
+    except discord.HTTPException as e:
+        await ctx.send(f"An error occurred while deleting messages: {e}")
+
 async def main():
     async with bot:
         await bot.start(TOKEN)
