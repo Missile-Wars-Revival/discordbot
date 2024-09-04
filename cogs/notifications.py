@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import asyncio
 import httpx
 from config import BACKEND_URL, NOTIFICATIONS_CHANNEL_ID
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -10,7 +11,8 @@ logger = logging.getLogger(__name__)
 class Notifications(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.last_checked_time = None
+        self.last_checked_time = datetime.now(timezone.utc)
+        self.notified_missile_ids = set()
         self.check_for_missiles.start()
 
     def cog_unload(self):
@@ -20,9 +22,7 @@ class Notifications(commands.Cog):
     async def check_for_missiles(self):
         try:
             async with httpx.AsyncClient() as client:
-                params = {}
-                if self.last_checked_time:
-                    params['since'] = self.last_checked_time.isoformat()
+                params = {'since': self.last_checked_time.isoformat()}
                 
                 logger.info(f"Checking for missiles with params: {params}")
                 response = await client.get(f"{BACKEND_URL}/api/recent-missiles", params=params)
@@ -32,18 +32,31 @@ class Notifications(commands.Cog):
                 logger.info(f"Received data: {data}")
 
                 for missile in data.get('missiles', []):
-                    channel = self.bot.get_channel(NOTIFICATIONS_CHANNEL_ID)
-                    if channel:
-                        message = f"{missile.get('sentBy', 'Unknown')} fired a {missile.get('type', 'unknown')} missile"
-                        if 'targetUsername' in missile:
-                            message += f" at {missile['targetUsername']}"
-                        await channel.send(message)
-                    else:
-                        logger.error(f"Could not find channel with ID {NOTIFICATIONS_CHANNEL_ID}")
+                    missile_id = missile.get('id')
+                    if missile_id and missile_id not in self.notified_missile_ids:
+                        channel = self.bot.get_channel(NOTIFICATIONS_CHANNEL_ID)
+                        if channel:
+                            message = f"{missile.get('sentBy', 'Unknown')} fired a {missile.get('type', 'unknown')} missile"
+                            if 'targetUsername' in missile:
+                                message += f" at {missile['targetUsername']}"
+                            await channel.send(message)
+                            self.notified_missile_ids.add(missile_id)
+                        else:
+                            logger.error(f"Could not find channel with ID {NOTIFICATIONS_CHANNEL_ID}")
                 
                 if data.get('missiles'):
-                    self.last_checked_time = max(missile.get('sentAt', self.last_checked_time) for missile in data['missiles'])
+                    self.last_checked_time = max(
+                        datetime.fromisoformat(missile.get('sentAt', self.last_checked_time.isoformat()))
+                        for missile in data['missiles']
+                    )
                     logger.info(f"Updated last_checked_time to {self.last_checked_time}")
+
+                # Prune old missile IDs to prevent set from growing indefinitely
+                current_time = datetime.now(timezone.utc)
+                self.notified_missile_ids = {
+                    missile_id for missile_id in self.notified_missile_ids
+                    if (current_time - datetime.fromisoformat(data['missiles'][missile_id]['sentAt'])).total_seconds() < 3600
+                }
 
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error occurred: {e}")
