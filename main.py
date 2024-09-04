@@ -16,6 +16,7 @@ async def on_ready():
     await bot.load_extension('cogs.map_data')
     await bot.load_extension('cogs.notifications')
     update_channel_description.start()
+    update_bot_status.start()
 
 @tasks.loop(minutes=5)
 async def update_channel_description():
@@ -29,6 +30,19 @@ async def update_channel_description():
                 active_players = data['active_players_count']
                 total_players = data['total_players']
                 await channel.edit(topic=f"Active Players: {active_players}/{total_players}")
+
+@tasks.loop(minutes=1)
+async def update_bot_status():
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{BACKEND_URL}/api/map-data")
+            data = response.json()
+            active_players = data['active_players_count']
+            total_players = data['total_players']
+            status = f"{active_players}/{total_players} players online"
+            await bot.change_presence(activity=discord.Game(name=status))
+    except Exception as e:
+        print(f"Error updating bot status: {e}")
 
 @bot.command(name='w')
 async def website(ctx):
