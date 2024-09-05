@@ -22,6 +22,7 @@ async def on_ready():
     await bot.load_extension('cogs.map_data')
     await bot.load_extension('cogs.notifications')
     update_channel_description.start()
+    update_bot_status.start()
     check_server_status.start()  # Start the new task
 
 @tasks.loop(minutes=5)
@@ -37,6 +38,24 @@ async def update_channel_description():
                 total_players = data['total_players']
                 uptime = get_uptime()
                 await channel.edit(topic=f"Active Players: {active_players}/{total_players} | Server Uptime: {uptime}")
+
+@tasks.loop(minutes=1)
+async def update_bot_status():
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{BACKEND_URL}/api/map-data", timeout=5.0)
+            if response.status_code == 200:
+                data = response.json()
+                active_players = data['active_players_count']
+                total_players = data['total_players']
+                status = f"{active_players}/{total_players} players"
+            else:
+                status = "Server Offline"
+    except Exception as e:
+        print(f"Error updating bot status: {e}")
+        status = "Server Offline"
+    
+    await bot.change_presence(activity=discord.Game(name=status))
 
 @tasks.loop(minutes=1)
 async def check_server_status():
