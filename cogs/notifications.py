@@ -1,11 +1,18 @@
 import logging
 from discord.ext import commands, tasks
 import httpx
-from config import BACKEND_URL, NOTIFICATIONS_CHANNEL_ID
+import discord
+import firebase_admin
+from firebase_admin import credentials, storage
+from config import BACKEND_URL, NOTIFICATIONS_CHANNEL_ID, FIREBASE_CREDENTIALS_PATH
 from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Initialize Firebase
+cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
+firebase_admin.initialize_app(cred)
 
 class Notifications(commands.Cog):
     def __init__(self, bot):
@@ -54,8 +61,9 @@ class Notifications(commands.Cog):
             missile_id = missile.get('id')
             if missile_id and missile_id not in self.notified_ids:
                 await self.send_notification(
-                    f"{missile.get('sentBy', 'Unknown')} fired a {missile.get('type', 'unknown')} missile"
-                    f"{' at ' + missile['targetUsername'] if 'targetUsername' in missile else ''}"
+                    f"{missile.get('sentBy', 'Unknown')} fired a {missile.get('type', 'unknown')} missile",
+                    f"{' at ' + missile['targetUsername'] if 'targetUsername' in missile else ''}",
+                    missile.get('sentBy', 'Unknown')
                 )
                 self.notified_ids.add(missile_id)
 
@@ -64,15 +72,26 @@ class Notifications(commands.Cog):
             landmine_id = landmine.get('id')
             if landmine_id and landmine_id not in self.notified_ids:
                 await self.send_notification(
-                    f"{landmine.get('placedBy', 'Unknown')} placed a landmine"
-                    f"{' in ' + landmine['location'] if 'location' in landmine else ''}"
+                    f"{landmine.get('placedBy', 'Unknown')} placed a landmine",
+                    f"{' in ' + landmine['location'] if 'location' in landmine else ''}",
+                    landmine.get('placedBy', 'Unknown')
                 )
                 self.notified_ids.add(landmine_id)
 
-    async def send_notification(self, message):
+    async def send_notification(self, title, description, username):
         channel = self.bot.get_channel(NOTIFICATIONS_CHANNEL_ID)
         if channel:
-            await channel.send(message)
+            embed = discord.Embed(title=title, description=description, color=discord.Color.blue())
+            
+            try:
+                bucket = storage.bucket()
+                blob = bucket.blob(f"profileImages/{username}")
+                url = blob.generate_signed_url(expiration=300)  # URL valid for 5 minutes
+                embed.set_thumbnail(url=url)
+            except Exception as e:
+                logger.error(f"Error fetching profile image for {username}: {e}")
+
+            await channel.send(embed=embed)
         else:
             logger.error(f"Could not find channel with ID {NOTIFICATIONS_CHANNEL_ID}")
 
