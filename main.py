@@ -2,11 +2,13 @@ import discord
 from discord.ext import commands, tasks
 import asyncio
 import httpx
-from config import TOKEN, BACKEND_URL, GUILD_ID, NOTIFICATIONS_CHANNEL_ID
+from config import FIREBASE_CREDENTIALS_PATH, TOKEN, BACKEND_URL, GUILD_ID, NOTIFICATIONS_CHANNEL_ID
 import signal
 import sys
 from datetime import datetime, timedelta
 from discord import Embed
+import firebase_admin
+from firebase_admin import credentials
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -16,6 +18,12 @@ start_time = datetime.utcnow()
 
 last_server_status = None
 
+# Initialize Firebase
+cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
+firebase_admin.initialize_app(cred, {
+    'storageBucket': 'missile-wars-revival-10.appspot.com'
+})
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
@@ -23,7 +31,7 @@ async def on_ready():
     await bot.load_extension('cogs.notifications')
     update_channel_description.start()
     update_bot_status.start()
-    check_server_status.start()  # Start the new task
+    check_server_status.start() 
 
 @tasks.loop(minutes=5)
 async def update_channel_description():
@@ -120,7 +128,7 @@ async def website(ctx):
 @bot.command(name='clear')
 @commands.has_permissions(manage_messages=True)
 async def clear(ctx, amount: int):
-    max_amount = 1000  # Set your desired maximum here
+    max_amount = 1000  # Maximum number of messages to delete
     if amount <= 0:
         await ctx.send("Please specify a positive number of messages to delete.")
         return
@@ -132,24 +140,19 @@ async def clear(ctx, amount: int):
     await ctx.message.delete()
 
     deleted = 0
-    batch_size = 100  # Discord allows up to 100 messages to be deleted at once
     
     # Send an initial status message
     status_message = await ctx.send(f"Deleting messages... (0/{amount})")
 
     try:
         while deleted < amount:
-            # Calculate how many messages to delete in this batch
-            to_delete = min(batch_size, amount - deleted)
+            # Delete messages in chunks of 100 (Discord's limit)
+            to_delete = min(100, amount - deleted)
+            deleted += to_delete
+            await ctx.channel.purge(limit=to_delete)
             
-            # Fetch and delete messages
-            messages = await ctx.channel.history(limit=to_delete).flatten()
-            await ctx.channel.delete_messages(messages)
-            
-            deleted += len(messages)
-            
-            # Update status message every 5 batches or when done
-            if deleted % (batch_size * 5) == 0 or deleted == amount:
+            # Update status message every 200 deletions or when done
+            if deleted % 200 == 0 or deleted == amount:
                 await status_message.edit(content=f"Deleting messages... ({deleted}/{amount})")
             
             # Pause to respect rate limits

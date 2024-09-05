@@ -3,16 +3,13 @@ from discord.ext import commands, tasks
 import httpx
 import discord
 import firebase_admin
-from firebase_admin import credentials, storage
+from firebase_admin import storage
 from config import BACKEND_URL, NOTIFICATIONS_CHANNEL_ID, FIREBASE_CREDENTIALS_PATH
 from datetime import datetime, timezone
+import time  # Add this import
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Initialize Firebase
-cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
-firebase_admin.initialize_app(cred)
 
 class Notifications(commands.Cog):
     def __init__(self, bot):
@@ -20,6 +17,7 @@ class Notifications(commands.Cog):
         self.last_checked_time = datetime.now(timezone.utc)
         self.notified_ids = set()
         self.check_for_updates.start()
+        self.bucket = storage.bucket()  # This gets the default Firebase Storage bucket
 
     def cog_unload(self):
         self.check_for_updates.cancel()
@@ -56,55 +54,70 @@ class Notifications(commands.Cog):
         except Exception as e:
             logger.error(f"An error occurred: {e}", exc_info=True)
 
-    async def process_missiles(self, missiles):
-        for missile in missiles:
-            missile_id = missile.get('id')
-            if missile_id and missile_id not in self.notified_ids:
+    async def process_items(self, items, item_type):
+        for item in items:
+            item_id = item.get('id')
+            if item_id and item_id not in self.notified_ids:
+                action = "fired a" if item_type == "missile" else "placed a"
+                target = f" at {item['targetUsername']}" if 'targetUsername' in item else f" in {item['location']}" if 'location' in item else ""
                 await self.send_notification(
-                    f"{missile.get('sentBy', 'Unknown')} fired a {missile.get('type', 'unknown')} missile",
-                    f"{' at ' + missile['targetUsername'] if 'targetUsername' in missile else ''}",
-                    missile.get('sentBy', 'Unknown')
+                    f"{item.get('sentBy', 'Unknown')} {action} {item.get('type', item_type)}",
+                    target,
+                    item.get('sentBy', 'Unknown')
                 )
-                self.notified_ids.add(missile_id)
+                self.notified_ids.add(item_id)
+
+    async def process_missiles(self, missiles):
+        await self.process_items(missiles, "missile")
 
     async def process_landmines(self, landmines):
-        for landmine in landmines:
-            landmine_id = landmine.get('id')
-            if landmine_id and landmine_id not in self.notified_ids:
-                await self.send_notification(
-                    f"{landmine.get('placedBy', 'Unknown')} placed a landmine",
-                    f"{' in ' + landmine['location'] if 'location' in landmine else ''}",
-                    landmine.get('placedBy', 'Unknown')
-                )
-                self.notified_ids.add(landmine_id)
+        await self.process_items(landmines, "landmine")
 
     async def send_notification(self, title, description, username):
         channel = self.bot.get_channel(NOTIFICATIONS_CHANNEL_ID)
-        if channel:
-            embed = discord.Embed(title=title, description=description, color=discord.Color.blue())
-            
-            try:
-                bucket = storage.bucket()
-                blob = bucket.blob(f"profileImages/{username}")
-                url = blob.generate_signed_url(expiration=300)  # URL valid for 5 minutes
-                embed.set_thumbnail(url=url)
-            except Exception as e:
-                logger.error(f"Error fetching profile image for {username}: {e}")
-
-            await channel.send(embed=embed)
-        else:
+        if not channel:
             logger.error(f"Could not find channel with ID {NOTIFICATIONS_CHANNEL_ID}")
+            return
+
+        embed = discord.Embed(title=title, description=description, color=discord.Color.blue())
+        
+        try:
+            blob = self.bucket.blob(f"profileImages/{username}")
+            
+            # Use run_in_executor for the blob.exists() check
+            exists = await self.bot.loop.run_in_executor(None, blob.exists)
+            logger.info(f"Profile image for {username} exists: {exists}")
+            
+            if exists:
+                # Calculate the expiration time as a Unix timestamp
+                expiration_time = int(time.time() + 3600)  # 1 hour from now
+                logger.info(f"Setting signed URL expiration time to {expiration_time} (Unix timestamp)")
+                
+                url = await self.bot.loop.run_in_executor(
+                    None, 
+                    lambda: blob.generate_signed_url(expiration=expiration_time)
+                )
+                logger.info(f"Generated signed URL for {username}: {url}")
+                embed.set_thumbnail(url=url)
+            else:
+                logger.warning(f"Profile image for {username} not found")
+        except Exception as e:
+            logger.error(f"Error fetching profile image for {username}: {e}", exc_info=True)
+
+        try:
+            await channel.send(embed=embed)
+            logger.info(f"Sent notification for {username}")
+        except discord.errors.HTTPException as e:
+            logger.error(f"Failed to send message: {e}", exc_info=True)
 
     def prune_notified_ids(self, data):
         current_time = datetime.now(timezone.utc)
-        self.notified_ids = {
-            item_id for item_id in self.notified_ids
-            if any(
-                (current_time - datetime.fromisoformat(item.get('sentAt', ''))).total_seconds() < 3600
-                for item in data.get('missiles', []) + data.get('landmines', [])
-                if item.get('id') == item_id
-            )
+        all_items = data.get('missiles', []) + data.get('landmines', [])
+        valid_ids = {
+            item['id'] for item in all_items
+            if (current_time - datetime.fromisoformat(item.get('sentAt', ''))).total_seconds() < 3600
         }
+        self.notified_ids.intersection_update(valid_ids)
 
     @check_for_updates.before_loop
     async def before_check_for_updates(self):
