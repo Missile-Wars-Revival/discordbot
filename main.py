@@ -44,7 +44,11 @@ async def update_bot_status():
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(f"{BACKEND_URL}/api/map-data", timeout=5.0)
-            response.raise_for_status()  # Raise an exception for non-200 status codes
+            response.raise_for_status()
+            content = response.text
+            print(f"Raw response content: {content}")  # Log raw response
+            if not content.strip():
+                raise ValueError("Empty response")
             data = response.json()
             active_players = data['active_players_count']
             total_players = data['total_players']
@@ -57,13 +61,14 @@ async def update_bot_status():
         print(f"Error updating bot status: {str(e)}")
         status = "Connection Error"
     except ValueError as e:
-        print(f"Error updating bot status: Invalid JSON")
-        print(f"Response content: {response.text}")
+        print(f"Error updating bot status: {str(e)}")
+        print(f"Response content: {response.text if 'response' in locals() else 'No response'}")
         status = "Data Error"
     except Exception as e:
         print(f"Error updating bot status: {str(e)}")
         status = "Unknown Error"
     
+    print(f"Setting bot status to: {status}")  # Log the status being set
     await bot.change_presence(activity=discord.Game(name=status))
 
 @tasks.loop(minutes=1)
