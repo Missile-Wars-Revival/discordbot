@@ -10,8 +10,6 @@ from discord import Embed
 import firebase_admin
 from firebase_admin import credentials
 
-print("Python interpreter path:", sys.executable)
-
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -29,6 +27,7 @@ firebase_admin.initialize_app(cred, {
 
 @bot.event
 async def on_ready():
+    print("Python interpreter path:", sys.executable)
     print(f'{bot.user} has connected to Discord!')
     await bot.load_extension('cogs.map_data')
     await bot.load_extension('cogs.notifications')
