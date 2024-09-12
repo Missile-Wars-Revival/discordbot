@@ -10,6 +10,9 @@ from discord import Embed
 import firebase_admin
 from firebase_admin import credentials
 
+print("Python interpreter path:", sys.executable)
+
+
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)

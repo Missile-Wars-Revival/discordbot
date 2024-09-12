@@ -1,6 +1,6 @@
 # Install:
 ```
-pip install discord.py httpx pillow firebase-admin
+pip install discord httpx pillow firebase_admin
 ```
 
 # Run:
