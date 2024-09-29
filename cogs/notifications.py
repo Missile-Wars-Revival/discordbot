@@ -7,6 +7,7 @@ from firebase_admin import storage
 from config import BACKEND_URL, NOTIFICATIONS_CHANNEL_ID, FIREBASE_CREDENTIALS_PATH
 from datetime import datetime, timezone
 import time  # Add this import
+from datetime import timedelta  # Add this import
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,11 +38,12 @@ class Notifications(commands.Cog):
 
                 await self.process_missiles(data.get('missiles', []))
                 await self.process_landmines(data.get('landmines', []))
+                await self.process_other(data.get('other', []))
 
-                if data.get('missiles') or data.get('landmines'):
+                if data.get('missiles') or data.get('landmines') or data.get('other'):
                     self.last_checked_time = max(
                         datetime.fromisoformat(item.get('sentAt', self.last_checked_time.isoformat()))
-                        for item in data.get('missiles', []) + data.get('landmines', [])
+                        for item in data.get('missiles', []) + data.get('landmines', []) + data.get('other', [])
                     )
                     logger.info(f"Updated last_checked_time to {self.last_checked_time}")
 
@@ -58,12 +60,18 @@ class Notifications(commands.Cog):
         for item in items:
             item_id = item.get('id')
             if item_id and item_id not in self.notified_ids:
-                action = "fired a" if item_type == "missile" else "placed a"
+                if item_type == "missile":
+                    action = "fired a"
+                    actor = item.get('sentBy', 'Unknown')
+                else:
+                    action = "placed a"
+                    actor = item.get('placedBy', 'Unknown')
+                
                 target = f" at {item['targetUsername']}" if 'targetUsername' in item else f" in {item['location']}" if 'location' in item else ""
                 await self.send_notification(
-                    f"{item.get('sentBy', 'Unknown')} {action} {item.get('type', item_type)}",
+                    f"{actor} {action} {item.get('type', item_type)}",
                     target,
-                    item.get('sentBy', 'Unknown')
+                    actor
                 )
                 self.notified_ids.add(item_id)
 
@@ -72,6 +80,9 @@ class Notifications(commands.Cog):
 
     async def process_landmines(self, landmines):
         await self.process_items(landmines, "landmine")
+    
+    async def process_other(self, other):
+        await self.process_items(other, "other")
 
     async def send_notification(self, title, description, username):
         channel = self.bot.get_channel(NOTIFICATIONS_CHANNEL_ID)
@@ -112,11 +123,24 @@ class Notifications(commands.Cog):
 
     def prune_notified_ids(self, data):
         current_time = datetime.now(timezone.utc)
-        all_items = data.get('missiles', []) + data.get('landmines', [])
-        valid_ids = {
-            item['id'] for item in all_items
-            if (current_time - datetime.fromisoformat(item.get('sentAt', ''))).total_seconds() < 3600
-        }
+        all_items = data.get('missiles', []) + data.get('landmines', []) + data.get('other', [])
+        valid_ids = set()
+
+        for item in all_items:
+            item_id = item.get('id')
+            if item_id is None:
+                continue
+
+            if 'sentAt' in item:  # For missiles
+                expiration_time = datetime.fromisoformat(item['sentAt']) + timedelta(hours=1)
+            elif 'Expires' in item:  # For landmines and other
+                expiration_time = datetime.fromisoformat(item['Expires'])
+            else:
+                continue  # Skip items without a valid expiration time
+
+            if current_time < expiration_time:
+                valid_ids.add(item_id)
+
         self.notified_ids.intersection_update(valid_ids)
 
     @check_for_updates.before_loop
