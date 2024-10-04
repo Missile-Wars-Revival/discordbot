@@ -22,7 +22,7 @@ last_server_status = None
 # Initialize Firebase
 cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
 firebase_admin.initialize_app(cred, {
-    'storageBucket': 'missile-wars-revival-10.appspot.com'
+    'storageBucket': 'missile-wars-432403.appspot.com'
 })
 
 @bot.event
