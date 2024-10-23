@@ -47,6 +47,8 @@ next-env.d.ts
 #creds
 cogs/creds.json
 
+config.py
+
 
 .flaskenv*
 !.env.project
